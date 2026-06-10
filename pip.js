@@ -96,7 +96,6 @@
       if (el) {
         clearInterval(t);
         realClick(el);
-        showPipToast("شما", emoji);
       } else if (tries > 8) {
         clearInterval(t);
         clickIt(SEL.reactionsBtn); // close the menu — emoji not available on this server
@@ -107,8 +106,7 @@
   const actions = {
     toggleMic()   { $(SEL.unmuteMic) ? clickIt(SEL.unmuteMic) : clickIt(SEL.muteMic); },
     raiseHand() {
-      if (clickIt(SEL.raiseHand)) showPipToast("شما", "✋");
-      else sendReaction("✋"); // some versions keep the hand inside the reactions menu
+      if (!clickIt(SEL.raiseHand)) sendReaction("✋"); // some versions keep the hand inside the reactions menu
     },
     toggleAudio() {
       if ($(SEL.leaveAudio)) { clickIt(SEL.leaveAudio); }
@@ -150,7 +148,8 @@
   const PIP_W = 360;
   const PIP_H = 380;
 
-  let settled = false; // geometry verified at target size/position?
+  let settled = false;   // geometry verified at target size/position?
+  let adjusting = false; // a resize we triggered ourselves (vs. the user's)
 
   // Chrome sometimes silently ignores resizeTo/moveTo without a user gesture,
   // so we measure the real geometry and retry until the window actually sits
@@ -174,8 +173,10 @@
       settled = true;
       return;
     }
+    adjusting = true;
     try { if (!sizeOk) win.resizeTo(PIP_W, PIP_H); } catch { /* needs user gesture */ }
     try { if (!posOk) win.moveTo(tx, ty); } catch { /* needs user gesture */ }
+    setTimeout(() => { adjusting = false; }, 120);
   }
 
   // Some BBB versions always keep a visible dialog element in the page; only
@@ -389,6 +390,25 @@
       .replace(/\s{2,}/g, " ")
       .trim();
 
+  // Your own display name, read from BBB's user list — the current user's
+  // entry is marked with "(You)" (or its localized form).
+  const YOU_RE = /\((You|شما)\)/i;
+  function getOwnName() {
+    const cur =
+      document.querySelector('[data-test="userListItemCurrent"]') ||
+      [...document.querySelectorAll('[data-test^="userListItem"], [role="listitem"]')]
+        .find((el) => YOU_RE.test(el.textContent));
+    return stripTime(cur?.textContent || "").replace(YOU_RE, "").trim();
+  }
+
+  // Notifications are for other people's activity — skip your own
+  function isSelf(name, holder) {
+    if (holder && YOU_RE.test(holder.textContent)) return true;
+    if (!name) return false;
+    const own = getOwnName();
+    return !!own && (name === own || own.startsWith(name) || name.startsWith(own));
+  }
+
   function watchNotifications() {
     const MSG_SEL = '[data-test="msgListItem"], [data-test="chatMessages"] [role="listitem"]';
     const REACT_SEL = '[data-test*="eaction"]';
@@ -425,6 +445,7 @@
               holder?.querySelector('[data-test="userListItemName"], [aria-label]')
                 ?.textContent
             );
+            if (isSelf(name, holder)) continue; // your own reaction — skip
             showPipToast(name && name.length <= 40 ? name : "", txt);
           }
 
@@ -549,6 +570,13 @@
       height: PIP_H,
     });
     pipWin = win;
+
+    // A resize we did not trigger ourselves means the user resized the
+    // window manually — stop enforcing geometry for good so clicking a
+    // button never snaps the window back to the default size.
+    win.addEventListener("resize", () => {
+      if (!adjusting) settled = true;
+    });
 
     // Verify/correct geometry aggressively for the first few seconds —
     // Chrome sometimes refuses moves right after opening.
