@@ -1,59 +1,95 @@
-# BBB Floating Controls
+# BBB Floating Controls — Picture-in-Picture Controls for BigBlueButton
 
-Floating picture-in-picture controls for BigBlueButton meetings. Manage your microphone, camera, screen sharing and audio from any tab.
+> A free, open-source **Chrome and Firefox extension for BigBlueButton** that adds a floating, always-on-top **picture-in-picture control bar** to your meetings. Mute your **microphone**, toggle your **camera**, start **screen sharing**, send **reactions**, and raise your hand from any tab — or even while working in another application — with a single click.
 
-A Chrome extension for BigBlueButton — when you switch to another tab during a meeting, a small always-on-top floating window opens with full meeting controls: **microphone**, **camera**, **screen sharing**, **audio** and **reactions**.
+**Keywords:** BigBlueButton extension · BigBlueButton Chrome extension · BigBlueButton Firefox add-on · BigBlueButton floating controls · BigBlueButton picture-in-picture · BBB mute microphone from any tab · BigBlueButton always-on-top mic camera controls · BBB reactions and raise hand.
 
 <p align="center">
-  <img src="assets/preview.svg" alt="The floating control window: a chat notification toast on top, a reactions row, and round mic/camera/screen-share/audio buttons" width="420">
+  <img src="assets/preview.svg" alt="BigBlueButton floating picture-in-picture control window showing a chat notification toast, a reactions and raise-hand row, and round microphone, camera, screen-share and audio buttons" width="420">
 </p>
 
-## Motivation
+---
 
-BigBlueButton has a solid web client, but one frustrating gap in day-to-day use: **the moment you switch to another tab mid-meeting, you lose all visual connection to the meeting.**
+## What is BBB Floating Controls?
 
-- You can't tell whether your microphone is live — everyone has accidentally worked away with a hot mic at least once.
-- A simple mute requires finding the meeting tab, switching to it, clicking the button, and switching back — right in the middle of whatever you were doing.
-- If someone calls on you, it takes precious seconds to get back to the meeting.
+**BigBlueButton (BBB)** is a great open-source web conferencing platform for online teaching and meetings, but it has one everyday gap: **the moment you switch to another browser tab — or to another app — you lose all visual connection to the meeting.** You can't see whether your mic is live, and muting means hunting for the meeting tab, clicking, and switching back.
 
-Commercial meeting platforms solve this with an automatic floating window; BigBlueButton doesn't have one. This extension brings that experience to BBB: switch tabs and a compact always-on-top window appears in the bottom-right corner of your screen, giving you full meeting control right there.
+**BBB Floating Controls** fixes this. It opens a small, always-on-top floating window (using the browser's **Document Picture-in-Picture API**) with full meeting controls, so you keep complete control of your microphone, camera, screen share and reactions no matter what you're doing on your computer.
+
+This extension is **unofficial** and not affiliated with BigBlueButton Inc. It works entirely in your browser, talks to **no external server**, and requires no account.
+
+---
 
 ## Features
 
-- **Opens automatically** when you switch to another tab, and closes automatically when you return to the meeting tab
-- Control your **microphone** (with mute-state indicator and the `M` keyboard shortcut), **camera**, **screen sharing** and **audio connection**
-- **Send reactions** (✋ 👍 👎 👏 😄 😮 ❤️) straight from the floating window, via BBB's own reactions menu
-- **Chat and reaction notifications:** chat messages and participant reactions (emoji, raised hands, etc.) appear as small toast cards at the top of the floating window and fade out automatically after a few seconds
-- **Live video mirroring:** when a webcam or presentation is playing, it's shown inside the floating window; with no video, the window stays compact
-- **Automatic return to the meeting tab** whenever an action needs a dialog — such as BBB's webcam settings modal or the browser's camera/screen permission prompt
-- The floating window stays available while screen sharing. Note: when sharing a **tab or window**, the floating window never appears in the shared image; when sharing the **entire screen**, everything on the monitor — including this window — is captured (a browser limitation, not the extension's)
-- Automatically positions itself in the **bottom-right corner** of the screen
-- A manual launcher button on the BBB page itself (bottom-left)
-- No special permissions — just a content script
+| Feature | What it does |
+| --- | --- |
+| 🎤 **Microphone control** | Mute/unmute from the floating window with one click, with a clear live/muted indicator. |
+| 📷 **Camera control** | Turn your webcam on/off from the window. |
+| 🖥️ **Screen sharing** | Start and stop screen sharing in one click. |
+| 🔊 **Audio connection** | Join or leave the meeting audio. |
+| 🙋 **Raise hand** | Raise and lower your hand; the button stays highlighted until you lower it. |
+| 😀 **Reactions / stickers** | Send BBB's native reactions (😀 😐 🙁 👍 👎 👏). The chosen sticker is highlighted and **auto-clears after 5 seconds**, just like in BBB. |
+| 🖼️ **Live mirroring** | Mirrors the active webcam or screen share into the floating window — and now also shows the current **shared PDF / presentation slide** when no video stream is present. |
+| 🔔 **Notifications** | Chat messages and other participants' reactions pop up as toast cards inside the window and fade out automatically. |
+| 🪟 **Tab-independent window** | Opens when you switch away from the meeting tab and stays on top across later **tab and app switches** — it is not tied to the BigBlueButton tab. |
+
+---
 
 ## Installation
 
-1. Open Chrome and go to `chrome://extensions`.
-2. Enable **Developer mode** (top right).
-3. Click **Load unpacked** and select this folder.
+### Google Chrome / Microsoft Edge / Brave (Chromium)
+
+1. Download or clone this repository.
+2. Open `chrome://extensions` (or `edge://extensions`).
+3. Enable **Developer mode** (top-right).
+4. Click **Load unpacked** and select the project folder.
+
+### Mozilla Firefox
+
+1. Download or clone this repository.
+2. Open `about:debugging#/runtime/this-firefox`.
+3. Click **Load Temporary Add-on…** and select the `manifest.json` file.
+
+> **Firefox note:** Firefox does **not** yet support the Document Picture-in-Picture API, so the always-on-top floating *window* (that stays visible over other apps) is **Chromium-only**. On Firefox the extension instead shows an **in-page floating panel** (click the blue launcher button) with the same controls and reactions. The cross-application overlay will become available on Firefox once it ships Document PiP.
+
+---
 
 ## Usage
 
-- Join a BigBlueButton meeting. After a few seconds a round blue button appears at the bottom-left of the page — click it to open the floating window manually.
-- **For automatic opening on tab switch,** Chrome needs permission:
-  - Click the lock icon next to the BBB site's address → **Site settings** → set **Automatic picture-in-picture** to **Allow**.
-- Inside the floating window, press `M` to toggle your microphone.
-- Actions that require a dialog (turning on the camera, starting a screen share, joining audio) automatically take you back to the meeting tab so you can confirm there.
+1. Join a BigBlueButton meeting. After a few seconds a round blue **launcher button** appears at the bottom-left of the page.
+2. **Chrome:** the floating window opens automatically when you switch to another tab, and stays available when you then move to another application. You can also click the launcher button to open it manually. **Firefox:** click the launcher button to toggle the in-page panel.
+3. Click a **reaction/sticker** to send it; it highlights and clears itself after 5 seconds. Click **raise hand** to raise it (it stays until you lower it).
+
+---
 
 ## Requirements
 
-- Chrome **116+** (for Document Picture-in-Picture); automatic opening is supported from roughly version 120.
-- BigBlueButton HTML5 client **2.4+** (buttons are located via `data-test` attributes).
+- **Chrome / Edge / Brave 116+** for the full always-on-top floating window (Document Picture-in-Picture API).
+- **Firefox 128+** for the in-page panel and `world: "MAIN"` content scripts.
+- **BigBlueButton HTML5 client 2.4+** (controls are located via `data-test` attributes, kept in sync with the live meeting).
 
-## Technical notes
+---
 
-- The extension requests no special permissions and never talks to any external server; it's a single content script that activates only when it detects the BBB client.
-- The floating window's buttons click BBB's real buttons (simulating the full pointer/mouse event sequence), so mute/camera state always stays in sync with the meeting itself.
-- Automatic opening is implemented by registering an `enterpictureinpicture` handler with the MediaSession API; Chrome invokes it when a tab using the microphone/camera is hidden.
-- Window size and position are continuously measured and corrected: Chrome sometimes silently ignores programmatic `resizeTo`/`moveTo` calls without a user gesture, so the extension verifies the actual geometry and retries until the window truly lands in the bottom-right corner — then leaves it alone so you can drag it wherever you like.
-- Chat/reaction notifications come from a MutationObserver watching BBB's DOM (new chat list items, reaction elements, and BBB's own toast notifications), with safeguards against replaying old messages when the chat panel remounts.
+## Privacy
+
+This extension collects **no data**, uses **no analytics**, and makes **no network requests**. It runs a content script only on pages where it detects the BigBlueButton client, and all actions are performed by clicking BBB's own buttons in the page.
+
+---
+
+## How it works (technical notes)
+
+- **Real-button clicking:** the floating controls dispatch the full pointer/mouse event sequence on BBB's actual buttons (found via `data-test` selectors), so mic/camera/screen state always stays in sync with the meeting.
+- **Cross-surface UI:** the same markup renders either inside a Document-PiP window (Chromium) or inside a shadow-DOM in-page panel (Firefox fallback), keeping BBB's styles isolated.
+- **Slide mirroring:** when there is no live `<video>`, the extension finds the current presentation slide image in BBB's whiteboard and shows it, so a shared PDF is visible in the window.
+- **Geometry self-correction:** Chromium sometimes ignores gesture-less `resizeTo`/`moveTo`, so the window measures its real position and retries until it lands in the bottom-right corner, then leaves it alone for manual dragging.
+
+---
+
+## Contributing
+
+Issues and pull requests are welcome. If you test against a specific BigBlueButton version and a selector needs updating, please open an issue with the BBB version number.
+
+## License
+
+See the repository for license details.

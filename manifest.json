@@ -1,12 +1,18 @@
 {
   "manifest_version": 3,
   "name": "BBB Floating Controls",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Floating picture-in-picture controls for BigBlueButton meetings. Manage your microphone, camera, screen sharing and audio from any tab.",
   "icons": {
     "16": "assets/icon16.png",
     "48": "assets/icon48.png",
     "128": "assets/icon128.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "bbb-floating-controls@bigbluebottom",
+      "strict_min_version": "128.0"
+    }
   },
   "content_scripts": [
     {

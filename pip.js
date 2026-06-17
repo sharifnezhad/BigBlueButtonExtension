@@ -84,21 +84,153 @@
     setTimeout(() => tryClick(6), 150);
   }
 
-  // Send a reaction: open BBB's reactions menu in the main page and click
-  // the matching emoji inside it.
+  // Each reaction maps to the accessible-name / emoji-mart id fragments BBB may
+  // use, so we can find the right button even when the rendered glyph differs
+  // from ours (e.g. BBB's "smiley" is 😃 while a server might draw 😀).
+  const REACTION_NAMES = {
+    "✋": ["raisehand", "raise hand", "hand"],
+    "😃": ["smiley", "smile", "grinning", "smiling"],
+    "😐": ["neutral"],
+    "🙁": ["sad", "frown", "slightly frowning"],
+    "👍": ["thumbsup", "thumbs up", "thumbup", "+1"],
+    "👎": ["thumbsdown", "thumbs down", "thumbdown", "-1"],
+    "👏": ["applause", "clap"],
+  };
+
+  const VARIATION_SELECTOR = String.fromCharCode(0xfe0f);
+  const stripVS = (s) =>
+    (s || "").split(VARIATION_SELECTOR).join("").trim();
+
+  // Collect every scrap of text/attribute that might carry the emoji or its
+  // name — covers plain text, emoji-mart's <em-emoji native="…" id="…">, alt
+  // text and aria-labels.
+  function reactionBlob(el) {
+    const a = (name) => (el.getAttribute && el.getAttribute(name)) || "";
+    return (
+      (el.textContent || "") + " " +
+      a("native") + " " + a("id") + " " + a("data-id") + " " +
+      a("aria-label") + " " + a("title") + " " + a("alt") + " " + a("data-test")
+    );
+  }
+
+  const REACTION_CAND_SEL =
+    'em-emoji, [class*="emoji"], button, [role="button"], [role="menuitem"], li, span[aria-label], img[alt]';
+  const ACTIVE_SEL =
+    '[aria-pressed="true"], [aria-checked="true"], [class*="selected" i], [class*="active" i]';
+
+  // Candidate reaction elements, excluding participants' own reactions, chat
+  // emojis, and the toolbar reactions button (which mirrors the active emoji).
+  function reactionCandidates() {
+    return [...document.querySelectorAll(REACTION_CAND_SEL)].filter(
+      (c) =>
+        !c.closest('[data-test^="userListItem"], [data-test="chatMessages"], [data-test="msgListItem"]') &&
+        !c.closest('[data-test="reactionsButton"]')
+    );
+  }
+
+  function matchesReaction(c, emoji) {
+    const want = stripVS(emoji);
+    const names = REACTION_NAMES[emoji] || [];
+    const blob = reactionBlob(c);
+    const norm = stripVS(blob).toLowerCase();
+    return (
+      (want && stripVS(blob).includes(want)) ||
+      (names.length && names.some((n) => norm.includes(n)))
+    );
+  }
+
+  // The element to actually click for a candidate. BBB toggles the reaction on
+  // its menu item (a MUI <li>), so prefer that. Never return a bare container
+  // div or the toolbar "Reactions" button: that button mirrors the active
+  // emoji, and clicking it only opens the menu instead of toggling the
+  // reaction off — which is exactly why clearing used to fail.
+  function clickableFor(c) {
+    const item = c.closest('li, [role="menuitem"]');
+    if (item && item.offsetParent !== null) return item;
+    const btn = c.closest('button, [role="button"], a');
+    if (
+      btn && btn.offsetParent !== null &&
+      !btn.closest('[data-test="reactionsButton"]') &&
+      !/reaction/i.test(btn.getAttribute("aria-label") || "")
+    ) {
+      return btn;
+    }
+    return null;
+  }
+
+  function findReaction(emoji) {
+    for (const c of reactionCandidates()) {
+      if (!matchesReaction(c, emoji)) continue;
+      const el = clickableFor(c);
+      if (el) return el;
+    }
+    return null;
+  }
+
+  // The element BBB marks as the *currently active* reaction, so we can clear
+  // it even when re-selecting the plain emoji doesn't toggle it off.
+  function findActiveReaction(emoji) {
+    for (const c of reactionCandidates()) {
+      if (!matchesReaction(c, emoji)) continue;
+      const marked = c.matches(ACTIVE_SEL) ? c : c.closest(ACTIVE_SEL);
+      if (marked) {
+        const el = clickableFor(c);
+        if (el) return el;
+      }
+    }
+    return null;
+  }
+
+  // Send a reaction. The reactions bar may already be open (some BBB versions
+  // keep it visible) — in that case click the emoji directly; otherwise open
+  // the reactions menu first and click once it renders.
   function sendReaction(emoji) {
-    if (!clickIt(SEL.reactionsBtn)) return;
+    const direct = findReaction(emoji);
+    if (direct) { realClick(direct); return; }
+
+    if (!clickIt(SEL.reactionsBtn)) {
+      console.warn("[BBB-PiP] reactions button not found");
+      return;
+    }
     let tries = 0;
     const t = setInterval(() => {
       tries++;
-      const el = [...document.querySelectorAll('[role="menuitem"], button, li, [role="button"]')]
-        .find((b) => b.textContent.trim() === emoji && b.offsetParent !== null);
+      const el = findReaction(emoji);
       if (el) {
         clearInterval(t);
         realClick(el);
-      } else if (tries > 8) {
+      } else if (tries > 12) {
         clearInterval(t);
-        clickIt(SEL.reactionsBtn); // close the menu — emoji not available on this server
+        console.warn("[BBB-PiP] reaction not found for", emoji);
+      }
+    }, 150);
+  }
+
+  // Clear/deactivate the active reaction. Prefers the element BBB flags as
+  // selected/pressed; falls back to re-clicking the plain emoji (which toggles
+  // it off on versions that support it).
+  function clearReaction(emoji) {
+    console.info("[BBB-PiP] clearReaction start:", emoji);
+    const attempt = (where) => {
+      const target = findActiveReaction(emoji) || findReaction(emoji);
+      if (target) {
+        console.info("[BBB-PiP] clear-click", where, "->", target.tagName,
+          (target.getAttribute("class") || "").slice(0, 40));
+        realClick(target);
+        return true;
+      }
+      return false;
+    };
+    if (attempt("bar-open")) return;
+    console.info("[BBB-PiP] menu closed; reactionsBtn present:", !!$(SEL.reactionsBtn));
+    clickIt(SEL.reactionsBtn); // menu was closed — open it, then retry
+    let tries = 0;
+    const t = setInterval(() => {
+      tries++;
+      if (attempt("after-reopen #" + tries)) { clearInterval(t); }
+      else if (tries > 12) {
+        clearInterval(t);
+        console.warn("[BBB-PiP] clear failed: reaction emoji not found after reopening menu");
       }
     }, 150);
   }
@@ -122,6 +254,39 @@
     },
   };
 
+  // --- Sticker selection (10s auto-clear) -------------------------------------
+  // BBB keeps a chosen reaction until you open the menu and remove it. Here the
+  // sticker stays highlighted for STICKER_TIMEOUT, then we clear it on the BBB
+  // side (re-selecting the same emoji toggles it off) and drop the highlight.
+  const STICKER_TIMEOUT = 5000;
+  let selectedSticker = null;   // the emoji currently marked as selected
+  let stickerTimer = null;
+
+  function paintSticker(emoji) {
+    if (!uiRoot) return;
+    // Skip the raise-hand button — it manages its own persistent highlight.
+    uiRoot.querySelectorAll('.emoji:not([data-r="✋"])').forEach((b) => {
+      b.classList.toggle("selected", !!emoji && b.dataset.r === emoji);
+    });
+  }
+
+  function selectSticker(emoji) {
+    if (stickerTimer) clearTimeout(stickerTimer);
+    selectedSticker = emoji;
+    paintSticker(emoji);
+    console.info("[BBB-PiP] selectSticker:", emoji);
+    sendReaction(emoji);
+    stickerTimer = setTimeout(clearSticker, STICKER_TIMEOUT);
+  }
+
+  function clearSticker() {
+    if (stickerTimer) { clearTimeout(stickerTimer); stickerTimer = null; }
+    const emoji = selectedSticker;
+    selectedSticker = null;
+    paintSticker(null);
+    if (emoji) clearReaction(emoji); // deactivate it in BBB
+  }
+
   // --- SVG icons (Material Design paths) --------------------------------------
   const ICONS = {
     mic: '<path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5.91-3a1 1 0 0 0-1.98.18 4 4 0 0 1-7.86 0A1 1 0 0 0 6.09 11 6 6 0 0 0 11 16.92V19a1 1 0 0 0 2 0v-2.08A6 6 0 0 0 17.91 11z"/>',
@@ -142,6 +307,13 @@
   // --- Floating window (Document Picture-in-Picture) ---------------------------
   let pipWin = null;
   let pollTimer = null;
+
+  // Document PiP is Chromium-only. On Firefox (and any browser without it) we
+  // fall back to an in-page panel; the active surface is tracked by these.
+  const hasDocPiP = "documentPictureInPicture" in window;
+  let uiRoot = null; // Document (PiP) or ShadowRoot (panel) used for queries
+  let uiDoc = null;  // owning Document, for createElement
+  let uiBody = null; // the ".pip-surface" element (window body or panel div)
 
   // One fixed window size for all states. The video area simply expands into
   // the free space when a video is playing; otherwise controls are centered.
@@ -186,20 +358,27 @@
     [...document.querySelectorAll(SEL.anyModal)].filter((m) => m.offsetParent !== null);
   const hasNewModal = () => visibleModals().some((m) => !modalBaseline.has(m));
 
-  const PIP_CSS = `
-    :root { color-scheme: dark; }
+  // Component styles shared by both surfaces: the Document-PiP window (Chrome)
+  // and the in-page fallback panel (Firefox). The flex container is always
+  // ".pip-surface" so the same markup works inside a window body or a shadow
+  // root div.
+  const COMMON_CSS = `
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
+    .pip-surface {
       font-family: Vazirmatn, Tahoma, "Segoe UI", sans-serif;
       background: #131418; color: #e8eaed; direction: rtl;
-      display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+      display: flex; flex-direction: column; overflow: hidden;
       user-select: none;
     }
-    body.compact { justify-content: center; }
+    .pip-surface.compact { justify-content: center; }
 
     .video-wrap { flex: 1 1 auto; min-height: 0; background: #000; display: none; position: relative; }
     .video-wrap.show { display: block; }
-    .video-wrap video { width: 100%; height: 100%; object-fit: cover; }
+    .video-wrap video, .video-wrap img.slide {
+      width: 100%; height: 100%; object-fit: contain; display: none;
+    }
+    .video-wrap.mode-video video { display: block; object-fit: cover; }
+    .video-wrap.mode-slide img.slide { display: block; }
 
     .header {
       flex: none; display: flex; align-items: center; gap: 8px;
@@ -241,6 +420,13 @@
     }
     .emoji:hover { background: rgba(255,255,255,.1); transform: scale(1.18); }
     .emoji:active { transform: scale(.9); }
+    /* Visually marks the sticker chosen from the floating window. Auto-clears
+       after a timeout (see STICKER_TIMEOUT) so it mirrors BBB's own state. */
+    .emoji.selected {
+      background: #1a73e8; color: #fff;
+      box-shadow: 0 0 0 2px rgba(138,180,248,.55);
+    }
+    .emoji.selected:hover { background: #1a7fe8; }
 
     .controls {
       flex: none; display: flex; gap: 14px; justify-content: center; align-items: flex-start;
@@ -283,29 +469,47 @@
     .toast.hide { transition: opacity .35s, transform .35s; opacity: 0; transform: translateY(-6px); }
   `;
 
-  function buildPipUI(win) {
-    const doc = win.document;
-    doc.documentElement.lang = "fa";
-    const style = doc.createElement("style");
-    style.textContent = PIP_CSS;
-    doc.head.appendChild(style);
+  // Document-PiP window: the surface fills the whole window.
+  const PIP_CSS = `
+    :root { color-scheme: dark; }
+    html, body { height: 100%; }
+    body.pip-surface { height: 100%; }
+  ` + COMMON_CSS;
 
-    doc.body.innerHTML = `
+  // In-page fallback panel (Firefox / browsers without Document PiP): the
+  // surface lives in a fixed, draggable box rendered inside a shadow root so
+  // BBB's own styles can't leak in.
+  const PANEL_CSS = `
+    :host {
+      all: initial; position: fixed; bottom: 16px; left: 16px;
+      width: 340px; height: 380px; z-index: 2147483600; color-scheme: dark;
+    }
+    .pip-surface {
+      height: 100%; border-radius: 12px;
+      box-shadow: 0 10px 34px rgba(0,0,0,.55);
+      border: 1px solid rgba(255,255,255,.08);
+    }
+    .header { cursor: move; }
+  ` + COMMON_CSS;
+
+  // The inner markup is identical for both surfaces.
+  function surfaceMarkup() {
+    return `
       <div id="toasts"></div>
-      <div class="video-wrap"><video autoplay playsinline muted></video></div>
+      <div class="video-wrap"><video autoplay playsinline muted></video><img class="slide" alt=""></div>
       <div class="header">
         <span class="live-dot" title="جلسه در جریان است"></span>
         <span class="title">${escapeHtml(document.title || "BigBlueButton")}</span>
-        <button class="back" id="back" title="بازگشت به تب جلسه" aria-label="بازگشت به تب جلسه">${svg("back", 16)}</button>
+        <button class="back" id="back" title="بستن" aria-label="بستن">${svg("back", 16)}</button>
       </div>
       <div class="reactions" id="reactions">
         <button class="emoji" data-r="✋" title="بالا بردن دست" aria-label="بالا بردن دست">✋</button>
+        <button class="emoji" data-r="😃" aria-label="ری‌اکشن 😃">😃</button>
+        <button class="emoji" data-r="😐" aria-label="ری‌اکشن 😐">😐</button>
+        <button class="emoji" data-r="🙁" aria-label="ری‌اکشن 🙁">🙁</button>
         <button class="emoji" data-r="👍" aria-label="ری‌اکشن 👍">👍</button>
         <button class="emoji" data-r="👎" aria-label="ری‌اکشن 👎">👎</button>
         <button class="emoji" data-r="👏" aria-label="ری‌اکشن 👏">👏</button>
-        <button class="emoji" data-r="😄" aria-label="ری‌اکشن 😄">😄</button>
-        <button class="emoji" data-r="😮" aria-label="ری‌اکشن 😮">😮</button>
-        <button class="emoji" data-r="❤️" aria-label="ری‌اکشن ❤️">❤️</button>
       </div>
       <div class="controls">
         <div class="btn-wrap">
@@ -326,32 +530,105 @@
         </div>
       </div>
     `;
+  }
 
-    doc.getElementById("mic").addEventListener("click", actions.toggleMic);
-    doc.getElementById("cam").addEventListener("click", actions.toggleCam);
-    doc.getElementById("ss").addEventListener("click", actions.toggleSS);
-    doc.getElementById("audio").addEventListener("click", actions.toggleAudio);
-    doc.getElementById("back").addEventListener("click", focusMeetingTab);
+  // Wire up the controls inside a surface (window document or shadow root).
+  // onBack is what the close/back button does — return to the meeting tab for
+  // the PiP window, or hide the panel in the fallback.
+  function bindControls(root, onBack) {
+    root.getElementById("mic").addEventListener("click", actions.toggleMic);
+    root.getElementById("cam").addEventListener("click", actions.toggleCam);
+    root.getElementById("ss").addEventListener("click", actions.toggleSS);
+    root.getElementById("audio").addEventListener("click", actions.toggleAudio);
+    root.getElementById("back").addEventListener("click", onBack);
 
-    doc.getElementById("reactions").addEventListener("click", (e) => {
+    root.getElementById("reactions").addEventListener("click", (e) => {
       const btn = e.target.closest(".emoji");
       if (!btn) return;
       const emoji = btn.dataset.r;
-      if (emoji === "✋") actions.raiseHand();
-      else sendReaction(emoji);
+      if (emoji === "✋") {
+        // Raise hand keeps its own BBB state and must NOT auto-clear — just
+        // toggle the highlight to mirror it; the user lowers it manually.
+        actions.raiseHand();
+        btn.classList.toggle("selected");
+        return;
+      }
+      // Clicking the already-selected sticker clears it immediately
+      if (btn.classList.contains("selected")) clearSticker();
+      else selectSticker(emoji);
     });
+  }
 
-    // Keyboard shortcut: M toggles the microphone
-    doc.addEventListener("keydown", (e) => {
-      if (e.key.toLowerCase() === "m") actions.toggleMic();
-    });
+  function buildPipUI(win) {
+    const doc = win.document;
+    doc.documentElement.lang = "fa";
+    const style = doc.createElement("style");
+    style.textContent = PIP_CSS;
+    doc.head.appendChild(style);
+
+    doc.body.className = "pip-surface";
+    doc.body.innerHTML = surfaceMarkup();
+
+    uiRoot = doc; uiDoc = doc; uiBody = doc.body;
+    bindControls(doc, focusMeetingTab);
 
     // Any user interaction is a valid gesture to apply pending geometry —
     // but only while not settled, so we never fight a user's manual resize.
     doc.addEventListener("pointerdown", () => { if (!settled) applyGeometry(win); }, true);
     doc.addEventListener("keydown", () => { if (!settled) applyGeometry(win); }, true);
 
-    syncPipUI();
+    syncUI();
+  }
+
+  // --- In-page fallback panel (Firefox: no Document PiP API) -------------------
+  let panelHost = null;
+  let panelPoll = null;
+
+  function openPanel() {
+    if (panelHost) return;
+    const host = document.createElement("div");
+    host.id = "bbb-pip-panel";
+    const shadow = host.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = PANEL_CSS;
+    shadow.appendChild(style);
+    const surface = document.createElement("div");
+    surface.className = "pip-surface";
+    surface.innerHTML = surfaceMarkup();
+    shadow.appendChild(surface);
+    document.body.appendChild(host);
+
+    panelHost = host;
+    uiRoot = shadow; uiDoc = document; uiBody = surface;
+
+    bindControls(shadow, closePip);
+    enablePanelDrag(host, shadow.querySelector(".header"));
+
+    panelPoll = setInterval(syncUI, 400);
+    syncUI();
+  }
+
+  // Drag the panel by its header. Coordinates are clamped to the viewport so it
+  // can never be dragged fully off screen.
+  function enablePanelDrag(host, handle) {
+    if (!handle) return;
+    let sx = 0, sy = 0, ox = 0, oy = 0, dragging = false;
+    handle.addEventListener("pointerdown", (e) => {
+      if (e.target.closest(".back")) return; // let the close button work
+      dragging = true;
+      const r = host.getBoundingClientRect();
+      ox = r.left; oy = r.top; sx = e.clientX; sy = e.clientY;
+      host.style.bottom = "auto"; host.style.left = ox + "px"; host.style.top = oy + "px";
+      handle.setPointerCapture(e.pointerId);
+    });
+    handle.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      const w = host.offsetWidth, h = host.offsetHeight;
+      const nx = Math.min(Math.max(0, ox + e.clientX - sx), innerWidth - w);
+      const ny = Math.min(Math.max(0, oy + e.clientY - sy), innerHeight - h);
+      host.style.left = nx + "px"; host.style.top = ny + "px";
+    });
+    handle.addEventListener("pointerup", () => { dragging = false; });
   }
 
   function escapeHtml(s) {
@@ -362,12 +639,11 @@
   const TOAST_LIFETIME = 6000;
 
   function showPipToast(title, body) {
-    if (!pipWin || pipWin.closed) return;
-    const doc = pipWin.document;
-    const box = doc.getElementById("toasts");
+    if (!uiRoot) return;
+    const box = uiRoot.getElementById("toasts");
     if (!box) return;
 
-    const el = doc.createElement("div");
+    const el = uiDoc.createElement("div");
     el.className = "toast";
     el.innerHTML =
       (title ? `<b>${escapeHtml(title)}:</b> ` : "") + escapeHtml(body || "");
@@ -496,10 +772,36 @@
     return vids.sort((a, b) => b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight)[0];
   }
 
-  function syncPipUI() {
-    if (!pipWin || pipWin.closed) return;
-    if (!settled) applyGeometry(pipWin);
-    const doc = pipWin.document;
+  // A shared PDF / presentation is not a <video> — BBB renders the current
+  // slide as an <image> (or <img>) inside the whiteboard. Mirror that slide
+  // as a still image so the floating window shows what is being presented,
+  // even when no screen share / webcam stream exists.
+  function pickSlideImage() {
+    const container =
+      document.querySelector(
+        '[data-test="presentationContainer"], [data-test="whiteboard"], svg[data-test="whiteboard"], #whiteboard'
+      ) || document.body;
+    const cands = [...container.querySelectorAll("image, img")].filter((im) => {
+      const href = im.getAttribute("href") || im.getAttribute("xlink:href") || im.currentSrc || im.src;
+      if (!href) return false;
+      const r = im.getBoundingClientRect();
+      return r.width > 60 && r.height > 60 && im.checkVisibility?.() !== false;
+    });
+    if (!cands.length) return null;
+    const best = cands.sort((a, b) => {
+      const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+      return rb.width * rb.height - ra.width * ra.height;
+    })[0];
+    return best.getAttribute("href") || best.getAttribute("xlink:href") || best.currentSrc || best.src;
+  }
+
+  function syncUI() {
+    const doc = uiRoot;
+    if (!doc) return;
+    if (pipWin) {
+      if (pipWin.closed) return;
+      if (!settled) applyGeometry(pipWin);
+    }
     const st = getState();
 
     const mic = doc.getElementById("mic");
@@ -511,7 +813,7 @@
     mic.classList.toggle("off", st.micMuted);
     mic.innerHTML = svg(st.micMuted ? "micOff" : "mic");
     mic.disabled = !st.micAvailable;
-    mic.title = st.micMuted ? "وصل کردن میکروفون (M)" : "قطع میکروفون (M)";
+    mic.title = st.micMuted ? "وصل کردن میکروفون" : "قطع میکروفون";
     doc.getElementById("mic-label").textContent = st.micMuted ? "بی‌صدا" : "میکروفون";
 
     cam.classList.toggle("off", !st.camOn);
@@ -529,31 +831,45 @@
     audio.innerHTML = svg(st.audioJoined ? "headset" : "headsetOff");
     audio.title = st.audioJoined ? "قطع اتصال صدا" : "اتصال صدا";
 
-    // A new modal (webcam/audio settings, ...) needs the main tab
-    if (hasNewModal()) {
+    // A new modal (webcam/audio settings, ...) needs the main tab — only
+    // relevant for the PiP window; the in-page panel is already on that tab.
+    if (pipWin && hasNewModal()) {
       focusMeetingTab();
       return;
     }
 
-    // Video mirroring — window size never changes, the video area just
-    // fills the spare space above the controls.
+    // Mirroring — window size never changes, the media area just fills the
+    // spare space above the controls. A live <video> (webcam / screen share)
+    // wins; otherwise fall back to the presentation slide image (shared PDF).
     const wrap = doc.querySelector(".video-wrap");
     const pipVideo = wrap.querySelector("video");
+    const pipImg = wrap.querySelector("img.slide");
     const src = pickSourceVideo();
-    if (src && pipVideo.srcObject !== src.srcObject) {
-      pipVideo.srcObject = src.srcObject;
-      wrap.classList.add("show");
-    } else if (!src && wrap.classList.contains("show")) {
-      pipVideo.srcObject = null;
-      wrap.classList.remove("show");
+
+    if (src) {
+      if (pipVideo.srcObject !== src.srcObject) pipVideo.srcObject = src.srcObject;
+      wrap.classList.add("show", "mode-video");
+      wrap.classList.remove("mode-slide");
+    } else {
+      if (pipVideo.srcObject) pipVideo.srcObject = null;
+      const slide = pickSlideImage();
+      if (slide) {
+        if (pipImg.getAttribute("src") !== slide) pipImg.src = slide;
+        wrap.classList.add("show", "mode-slide");
+        wrap.classList.remove("mode-video");
+      } else {
+        if (pipImg.getAttribute("src")) pipImg.removeAttribute("src");
+        wrap.classList.remove("show", "mode-video", "mode-slide");
+      }
     }
-    // Center the controls when no video is displayed
-    doc.body.classList.toggle("compact", !wrap.classList.contains("show"));
+    // Center the controls when nothing is displayed
+    uiBody.classList.toggle("compact", !wrap.classList.contains("show"));
   }
 
   async function openPip() {
-    if (!("documentPictureInPicture" in window)) {
-      console.warn("[BBB-PiP] Document PiP not supported (Chrome 116+ required).");
+    if (!hasDocPiP) {
+      // No Document PiP (e.g. Firefox) — show the in-page panel instead.
+      openPanel();
       return;
     }
     if (pipWin && !pipWin.closed) return;
@@ -565,10 +881,18 @@
     // window position/size, and since we always settle the window in the
     // bottom-right corner, later opens (even without a gesture) start there.
     // Wrong geometry is corrected by the applyGeometry measuring loop.
-    const win = await documentPictureInPicture.requestWindow({
-      width: PIP_W,
-      height: PIP_H,
-    });
+    let win;
+    try {
+      win = await documentPictureInPicture.requestWindow({
+        width: PIP_W,
+        height: PIP_H,
+      });
+    } catch {
+      // Document PiP needs transient user activation. When the user switches
+      // away to another app without a recent gesture Chrome rejects the open;
+      // the priming click and the mediaSession handler cover the common paths.
+      return;
+    }
     pipWin = win;
 
     // A resize we did not trigger ourselves means the user resized the
@@ -595,49 +919,26 @@
     // The window may already be closed by the first sync (e.g. a new modal)
     if (!pipWin || win.closed) return;
 
-    pollTimer = setInterval(syncPipUI, 400);
+    pollTimer = setInterval(syncUI, 400);
     win.addEventListener("pagehide", () => {
       clearInterval(pollTimer);
-      if (pipWin === win) pipWin = null;
+      if (pipWin === win) {
+        pipWin = null;
+        uiRoot = uiDoc = uiBody = null;
+      }
     });
   }
 
   function closePip() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    if (panelPoll) { clearInterval(panelPoll); panelPoll = null; }
     if (pipWin && !pipWin.closed) pipWin.close();
     pipWin = null;
+    if (panelHost) { panelHost.remove(); panelHost = null; }
+    uiRoot = uiDoc = uiBody = null;
   }
 
-  // Chrome opens the very first PiP window of a session at its own default
-  // spot (often top-right) and ignores gestureless moveTo, so the first
-  // auto-open lands in the wrong corner. Fix: on the user's first click in
-  // the meeting page (a valid gesture) open a PiP window for a split second,
-  // park it in the bottom-right corner and close it. Chrome remembers that
-  // placement, so every later open — including the first automatic one —
-  // starts from the right spot.
-  let primed = false;
-  async function primePlacement() {
-    if (primed || pipWin || !("documentPictureInPicture" in window)) return;
-    if (visibleModals().length) return; // mid-dialog (e.g. echo test) — try on a later click
-    primed = true;
-    try {
-      const win = await documentPictureInPicture.requestWindow({ width: PIP_W, height: PIP_H });
-      win.document.body.style.background = "#131418";
-      const margin = 16;
-      const scr = win.screen;
-      const tx = (scr.availLeft ?? 0) + Math.max(0, scr.availWidth - PIP_W - margin);
-      const ty = (scr.availTop ?? 0) + Math.max(0, scr.availHeight - PIP_H - margin);
-      try { win.resizeTo(PIP_W, PIP_H); } catch { /* ignore */ }
-      try { win.moveTo(tx, ty); } catch { /* ignore */ }
-      setTimeout(() => {
-        try { win.close(); } catch { /* ignore */ }
-        window.focus();
-      }, 350);
-    } catch {
-      primed = false; // gesture got consumed or denied — retry on the next click
-    }
-  }
-
-  // --- Auto-open on tab switch -------------------------------------------------
+  // --- Auto-open: keep a floating window available for the whole meeting -------
   function registerAutoPip() {
     // Chrome invokes this when a tab using the mic/camera is hidden and
     // allows opening a PiP window without a user click.
@@ -647,14 +948,22 @@
       // Older Chrome doesn't know this action — the manual button still works
     }
 
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") {
-        closePip(); // back on the meeting tab — the floating window isn't needed
-      }
-    });
-
-    // Prime Chrome's remembered PiP placement on the first in-page click
-    document.addEventListener("pointerdown", () => primePlacement(), true);
+    // The floating window opens when the user leaves the meeting tab and closes
+    // again when they come back to it. It is not opened up front. Chrome's
+    // mediaSession handler above opens it without a gesture on tab switch; the
+    // blur listener also tries on an app switch (best-effort — Chrome may
+    // require a recent gesture). Firefox has no PiP window, so its in-page
+    // panel is opened on demand from the launcher button instead.
+    if (hasDocPiP) {
+      const onLeave = () => openPip();
+      const onReturn = () => closePip();
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") onReturn();
+        else onLeave();
+      });
+      window.addEventListener("blur", onLeave);
+      window.addEventListener("focus", onReturn);
+    }
   }
 
   // --- Launcher button on the BBB page itself -----------------------------------
@@ -683,7 +992,11 @@
       btn.style.background = "#0f70d7";
       btn.style.boxShadow = "0 3px 10px rgba(0,0,0,.35)";
     });
-    btn.addEventListener("click", openPip);
+    // Toggle: open the floating window / panel, or close it if already open.
+    btn.addEventListener("click", () => {
+      const open = (pipWin && !pipWin.closed) || panelHost;
+      if (open) closePip(); else openPip();
+    });
     document.body.appendChild(btn);
   }
 
